@@ -21,6 +21,27 @@ class Log:
         return (self.messages[i2][0] - self.messages[i1][0]) * 1000
 
 
+class ExtentLog:
+    # extent states
+    START = 0
+    EXTENT = 1
+
+    def __init__(self):
+        self.extents = {}
+
+    def start(self, extent_key):
+        self.extents[extent_key] = (ExtentLog.START, time.time())
+
+    def end(self, extent_key):
+        extent = self.extents[extent_key]
+        self.extents[extent_key] = (ExtentLog.EXTENT, time.time() - extent[1])
+
+    def get_ms(self, key):
+        return self.extents[key][1] * 1000
+
+    def __repr__(self):
+        return '\n'.join([f'{e}: {d[1] * 1000} (ms)' for e, d in self.extents.items() if d[0] == ExtentLog.EXTENT])
+
 # the hypothesis we're testing here is that flushing takes much longer than just .write-ing.
 def basic_sync_test():
     l = Log()
@@ -37,29 +58,37 @@ def basic_sync_test():
 # the hypothesis here is that writing a sector worth of information vs
 # less than a sector will take the same amount of time.
 def sector_test():
-    l = Log()
+    # averaging over 100 times
+    k1 = 'f1 write and sync'
+    k2 = 'f2 write and sync'
     # statically allocting these so that init-ing them doesn't mess
     # with our runtimes
     s1 = "meow"
     s2 = "mrow" * 100
 
-    l.add_message('opening file 1')
-    f1 = open('tmp/test1', 'w')
-    l.add_message('opening file 2')
-    f2 = open('tmp/test2', 'w')
-    l.add_message('writing file 1')
-    f1.write(s1)
-    l.add_message('syncing file 1')
-    os.fsync(f1.fileno())
-    l.add_message('writing file 2')
-    f2.write(s2)
-    l.add_message('syncing file 2')
-    os.fsync(f2.fileno())
-    l.add_message('finished')
-    f1.close()
-    f2.close()
-    print(l)
-    return l
+    results1 = []
+    results2 = []
+    for i in range(1000):
+        el = ExtentLog()
+        f1 = open('tmp/test1', 'w')
+        f2 = open('tmp/test2', 'w')
 
+        el.start(k1)
+        f1.write(s1)
+        os.fsync(f1.fileno())
+        el.end(k1)
 
-l = sector_test()
+        el.start(k2)
+        f2.write(s2)
+        os.fsync(f2.fileno())
+        el.end(k2)
+
+        f1.close()
+        f2.close()
+        results1.append(el.get_ms(k1))
+        results2.append(el.get_ms(k2))
+    results1_avg = sum(results1) / len(results1)
+    results2_avg = sum(results2) / len(results2)
+    print(results1_avg, results2_avg, results1_avg - results2_avg)
+
+sector_test()
